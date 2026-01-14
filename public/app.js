@@ -26,6 +26,8 @@ const view = $('#view');
 const toastEl = $('#toast');
 const authStatus = $('#authStatus');
 const logoutBtn = $('#logoutBtn');
+let bookingsView = 'list';
+let bookingsMonth = new Date();
 
 function toast(msg){
   toastEl.textContent = msg;
@@ -51,6 +53,19 @@ function fmtMilesWithFees(miles, fees, currency){
   const milesText = Number(miles).toLocaleString();
   const feeText = fmtCashWithCurrency(fees, currency || 'USD');
   return `${milesText}/${feeText}`;
+}
+function fmtDateOnly(s){
+  if(!s) return '—';
+  if(/^\d{4}-\d{2}-\d{2}/.test(s)){
+    const d = new Date(s);
+    if(String(d)!=='Invalid Date'){
+      return d.toLocaleDateString();
+    }
+    return s.slice(0,10);
+  }
+  const d = new Date(s);
+  if(String(d)==='Invalid Date') return s;
+  return d.toLocaleDateString();
 }
 function fmtDateTime(s){
   if(!s) return '—';
@@ -199,9 +214,14 @@ function renderLogin(){
 
 /* BOOKINGS LIST */
 async function renderBookings(){
+  const people = (await api.get('/api/people')).people || [];
   view.innerHTML = `
     <div class="row">
       <h1 class="spacer">Bookings</h1>
+      <div class="row">
+        <button id="viewList" class="btn btn-ghost">List</button>
+        <button id="viewCalendar" class="btn btn-ghost">Calendar</button>
+      </div>
       <a class="btn btn-primary" href="#/new">+ New booking</a>
     </div>
     <div class="card">
@@ -209,6 +229,10 @@ async function renderBookings(){
         <div style="min-width:220px;flex:1">
           <label>Search (person, route, flight #, reason)</label>
           <input id="q" placeholder="e.g. VS45 or Bombay or trade show"/>
+        </div>
+        <div style="min-width:200px">
+          <label>Person</label>
+          <select id="person_filter"><option value="">All</option></select>
         </div>
         <div style="min-width:180px">
           <label>Status</label>
@@ -224,15 +248,32 @@ async function renderBookings(){
       <div id="list" class="small muted">Loading…</div>
     </div>
   `;
+  const personFilter = $('#person_filter');
+  personFilter.innerHTML = '<option value="">All</option>' + people.map(p=>`<option value="${p.id}">${escapeHtml(p.name)}</option>`).join('');
+  const viewListBtn = $('#viewList');
+  const viewCalendarBtn = $('#viewCalendar');
+  function syncViewButtons(){
+    viewListBtn.classList.toggle('btn-primary', bookingsView === 'list');
+    viewCalendarBtn.classList.toggle('btn-primary', bookingsView === 'calendar');
+  }
+  syncViewButtons();
   async function load(){
     const q = $('#q').value.trim();
     const status = $('#status').value;
-    const data = await api.get(`/api/bookings?`+new URLSearchParams({q,status}).toString());
+    const person_id = personFilter.value || '';
+    const data = await api.get(`/api/bookings?`+new URLSearchParams({q,status,person_id}).toString());
     const rows = data.bookings || [];
     if(!rows.length){
       $('#list').innerHTML = '<div class="muted">No bookings found.</div>';
       return;
     }
+    if(bookingsView === 'calendar'){
+      renderCalendar(rows);
+    }else{
+      renderList(rows);
+    }
+  }
+  function renderList(rows){
     $('#list').innerHTML = `
       <div class="booking-list">
         <div class="booking-grid booking-header">
@@ -240,6 +281,7 @@ async function renderBookings(){
           <div>Arrival</div>
           <div>Airline</div>
           <div>Flight #</div>
+          <div>Depart date</div>
           <div>Traveler</div>
           <div>PNR</div>
           <div>Notes</div>
@@ -254,6 +296,7 @@ async function renderBookings(){
           const statusBadge = b.any_canceled ? '<span class="badge warn">Has canceled</span>' : '<span class="badge ok">OK</span>';
           const firstSeg = b.first_segment || {};
           const airline = airlineNameFromFlightNumber(firstSeg.flight_number, firstSeg.airline);
+          const departDate = fmtDateOnly(b.first_departure);
           const travelers = b.traveler_details?.length ? b.traveler_details : [{ name: '—', pnr: '', reason: '', status: '' }];
           return travelers.map(t=>{
             const travelerStatus = t.status === 'Canceled' ? '<span class="badge danger">Canceled</span>' : statusBadge;
@@ -264,6 +307,7 @@ async function renderBookings(){
                   <div>${escapeHtml(firstSeg.destination || '—')}</div>
                   <div>${escapeHtml(airline)}</div>
                   <div>${escapeHtml(firstSeg.flight_number || '—')}</div>
+                  <div>${escapeHtml(departDate)}</div>
                   <div>${escapeHtml(t.name || '—')}</div>
                   <div>${escapeHtml(t.pnr || '—')}</div>
                   <div>${escapeHtml(t.reason || '—')}</div>
@@ -285,9 +329,86 @@ async function renderBookings(){
       });
     });
   }
+  function renderCalendar(rows){
+    const month = new Date(bookingsMonth.getFullYear(), bookingsMonth.getMonth(), 1);
+    const year = month.getFullYear();
+    const monthIndex = month.getMonth();
+    const monthLabel = month.toLocaleString(undefined, {month:'long', year:'numeric'});
+    const startDay = month.getDay();
+    const daysInMonth = new Date(year, monthIndex + 1, 0).getDate();
+    const dayHeaders = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+    const itemsByDate = new Map();
+    rows.forEach(b=>{
+      const dateKey = (b.first_departure || '').slice(0,10);
+      if(!dateKey) return;
+      const firstSeg = b.first_segment || {};
+      const airline = airlineNameFromFlightNumber(firstSeg.flight_number, firstSeg.airline);
+      const travelers = b.traveler_details?.length ? b.traveler_details : [{ name: '—', pnr: '', reason: '', status: '' }];
+      travelers.forEach(t=>{
+        const label = `${t.name || '—'} • ${airline} ${firstSeg.flight_number || ''} ${firstSeg.origin || '—'}→${firstSeg.destination || '—'}`.trim();
+        const items = itemsByDate.get(dateKey) || [];
+        items.push({ id: b.id, label });
+        itemsByDate.set(dateKey, items);
+      });
+    });
+    const cells = [];
+    for(let i=0;i<startDay;i++){
+      cells.push('<div class="calendar-cell muted"></div>');
+    }
+    for(let day=1; day<=daysInMonth; day++){
+      const dateKey = `${year}-${String(monthIndex+1).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+      const items = itemsByDate.get(dateKey) || [];
+      cells.push(`
+        <div class="calendar-cell">
+          <div class="calendar-date">${day}</div>
+          <div class="calendar-items">
+            ${items.map(item=>`<div class="calendar-item" data-id="${item.id}">${escapeHtml(item.label)}</div>`).join('')}
+          </div>
+        </div>
+      `);
+    }
+    $('#list').innerHTML = `
+      <div class="calendar">
+        <div class="row calendar-toolbar">
+          <button id="calPrev" class="btn btn-ghost">◀</button>
+          <div class="spacer"><strong>${escapeHtml(monthLabel)}</strong></div>
+          <button id="calNext" class="btn btn-ghost">▶</button>
+        </div>
+        <div class="calendar-grid">
+          ${dayHeaders.map(d=>`<div class="calendar-header-cell">${d}</div>`).join('')}
+          ${cells.join('')}
+        </div>
+      </div>
+    `;
+    document.querySelectorAll('.calendar-item').forEach(item=>{
+      item.addEventListener('click', ()=>{
+        const id = item.dataset.id;
+        location.hash = `#/booking/${id}`;
+      });
+    });
+    $('#calPrev').addEventListener('click', ()=>{
+      bookingsMonth = new Date(year, monthIndex - 1, 1);
+      load().catch(e=>toast(e.message));
+    });
+    $('#calNext').addEventListener('click', ()=>{
+      bookingsMonth = new Date(year, monthIndex + 1, 1);
+      load().catch(e=>toast(e.message));
+    });
+  }
   $('#refresh').addEventListener('click', ()=>load().catch(e=>toast(e.message)));
   $('#q').addEventListener('keydown', (e)=>{ if(e.key==='Enter') load().catch(err=>toast(err.message)); });
   $('#status').addEventListener('change', ()=>load().catch(e=>toast(e.message)));
+  $('#person_filter').addEventListener('change', ()=>load().catch(e=>toast(e.message)));
+  viewListBtn.addEventListener('click', ()=>{
+    bookingsView = 'list';
+    syncViewButtons();
+    load().catch(e=>toast(e.message));
+  });
+  viewCalendarBtn.addEventListener('click', ()=>{
+    bookingsView = 'calendar';
+    syncViewButtons();
+    load().catch(e=>toast(e.message));
+  });
   load().catch(e=>toast(e.message));
 }
 
