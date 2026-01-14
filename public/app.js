@@ -44,9 +44,33 @@ function fmtDateTime(s){
   if(String(d)==='Invalid Date') return s;
   return d.toLocaleString();
 }
+function formatTimeInput(s){
+  if(!s) return '';
+  if(/^\d{4}-\d{2}-\d{2}T/.test(s)){
+    const d = new Date(s);
+    if(String(d)!=='Invalid Date'){
+      return d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+    }
+  }
+  return s;
+}
+function segmentDateTime(seg, field){
+  const value = seg?.[field];
+  if(!value) return null;
+  if(/^\d{4}-\d{2}-\d{2}/.test(value)){
+    const d = new Date(value);
+    return String(d)==='Invalid Date' ? null : d;
+  }
+  if(seg.flight_date && /^\d{1,2}:\d{2}/.test(value)){
+    const d = new Date(`${seg.flight_date}T${value}:00`);
+    return String(d)==='Invalid Date' ? null : d;
+  }
+  return null;
+}
 function hoursBetween(a,b){
   if(!a||!b) return null;
-  const da=new Date(a), db=new Date(b);
+  const da = a instanceof Date ? a : new Date(a);
+  const db = b instanceof Date ? b : new Date(b);
   if(String(da)==='Invalid Date'||String(db)==='Invalid Date') return null;
   return (db-da)/36e5;
 }
@@ -259,8 +283,8 @@ async function renderNewBooking(){
             <input id="secondary_class" placeholder="optional"/>
           </div>
           <div>
-            <label>Ticket end (optional)</label>
-            <input id="ticket_end" placeholder="e.g. 016-1234567890"/>
+            <label>Ticket end date (optional)</label>
+            <input id="ticket_end" type="date"/>
           </div>
           <div>
             <label>Issued on (optional)</label>
@@ -391,11 +415,11 @@ async function renderNewBooking(){
 
         <div>
           <label>Scheduled departure</label>
-          <input data-sdep="${idx}" placeholder="auto" value="${escapeAttr(prefill.sched_departure||'')}"/>
+          <input data-sdep="${idx}" placeholder="auto" value="${escapeAttr(formatTimeInput(prefill.sched_departure||''))}"/>
         </div>
         <div>
           <label>Scheduled arrival</label>
-          <input data-sarr="${idx}" placeholder="auto" value="${escapeAttr(prefill.sched_arrival||'')}"/>
+          <input data-sarr="${idx}" placeholder="auto" value="${escapeAttr(formatTimeInput(prefill.sched_arrival||''))}"/>
         </div>
         <div>
           <label>Airline (optional)</label>
@@ -422,8 +446,8 @@ async function renderNewBooking(){
         el.querySelector(`[data-origin="${idx}"]`).value = f.origin || '';
         el.querySelector(`[data-dest="${idx}"]`).value = f.destination || '';
         el.querySelector(`[data-aircraft="${idx}"]`).value = f.aircraft_type || '';
-        el.querySelector(`[data-sdep="${idx}"]`).value = f.sched_departure || '';
-        el.querySelector(`[data-sarr="${idx}"]`).value = f.sched_arrival || '';
+        el.querySelector(`[data-sdep="${idx}"]`).value = formatTimeInput(f.sched_departure || '');
+        el.querySelector(`[data-sarr="${idx}"]`).value = formatTimeInput(f.sched_arrival || '');
         el.querySelector(`[data-airline="${idx}"]`).value = f.airline || '';
         statusEl.textContent = 'Done';
         recomputeLayoversHint();
@@ -461,8 +485,8 @@ async function renderNewBooking(){
     }).filter(s=>s.flight_number && s.flight_date);
     // sort by sched_departure if present, else by flight_date
     segs.sort((a,b)=>{
-      const da = a.sched_departure ? new Date(a.sched_departure).getTime() : new Date(a.flight_date).getTime();
-      const db = b.sched_departure ? new Date(b.sched_departure).getTime() : new Date(b.flight_date).getTime();
+      const da = segmentDateTime(a, 'sched_departure')?.getTime() ?? new Date(a.flight_date).getTime();
+      const db = segmentDateTime(b, 'sched_departure')?.getTime() ?? new Date(b.flight_date).getTime();
       return da-db;
     });
     return segs;
@@ -471,7 +495,10 @@ async function renderNewBooking(){
   function summarizeLayovers(segs){
     const parts=[];
     for(let i=0;i<segs.length-1;i++){
-      const h = hoursBetween(segs[i].sched_arrival, segs[i+1].sched_departure);
+      const h = hoursBetween(
+        segmentDateTime(segs[i], 'sched_arrival'),
+        segmentDateTime(segs[i+1], 'sched_departure')
+      );
       if(h===null) continue;
       const label = h < 0 ? '—' : (h < 24 ? `${h.toFixed(1)}h` : `${Math.round(h)}h`);
       parts.push(label);
@@ -717,7 +744,10 @@ async function renderBookingDetail(id){
   function computeLayovers(segs){
     const out=[];
     for(let i=0;i<segs.length-1;i++){
-      const h=hoursBetween(segs[i].sched_arrival, segs[i+1].sched_departure);
+      const h = hoursBetween(
+        segmentDateTime(segs[i], 'sched_arrival'),
+        segmentDateTime(segs[i+1], 'sched_departure')
+      );
       if(h===null){ out.push('—'); continue; }
       out.push(h<0?'—':(h<24?`${h.toFixed(1)}h`:`${Math.round(h)}h`));
     }
