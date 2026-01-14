@@ -38,6 +38,20 @@ function fmtMoney(n){
   const v = Number(n);
   return v.toLocaleString(undefined,{style:'currency',currency:'USD'});
 }
+function fmtCashWithCurrency(amount, currency){
+  if(amount===null||amount===undefined||amount===''||Number.isNaN(Number(amount))) return 'N/A';
+  const value = Number(amount);
+  if(currency === 'USD'){
+    return value.toLocaleString(undefined, {style:'currency', currency:'USD'});
+  }
+  return `${currency} ${value.toLocaleString()}`;
+}
+function fmtMilesWithFees(miles, fees, currency){
+  if(miles===null||miles===undefined||miles===''||Number.isNaN(Number(miles))) return 'N/A';
+  const milesText = Number(miles).toLocaleString();
+  const feeText = fmtCashWithCurrency(fees, currency || 'USD');
+  return `${milesText}/${feeText}`;
+}
 function fmtDateTime(s){
   if(!s) return '—';
   const d = new Date(s);
@@ -73,6 +87,37 @@ function hoursBetween(a,b){
   const db = b instanceof Date ? b : new Date(b);
   if(String(da)==='Invalid Date'||String(db)==='Invalid Date') return null;
   return (db-da)/36e5;
+}
+
+const AIRLINE_MAP = {
+  UA: 'United',
+  AA: 'American',
+  DL: 'Delta',
+  WN: 'Southwest',
+  B6: 'JetBlue',
+  AS: 'Alaska',
+  NK: 'Spirit',
+  F9: 'Frontier',
+  AC: 'Air Canada',
+  BA: 'British Airways',
+  VS: 'Virgin Atlantic',
+  LH: 'Lufthansa',
+  AF: 'Air France',
+  KL: 'KLM',
+  QR: 'Qatar Airways',
+  EK: 'Emirates',
+  EY: 'Etihad',
+  SQ: 'Singapore Airlines',
+  CX: 'Cathay Pacific',
+  AI: 'Air India'
+};
+
+function airlineNameFromFlightNumber(flightNumber, fallback){
+  if(fallback) return fallback;
+  const match = (flightNumber || '').match(/^[A-Za-z]{2,3}/);
+  if(!match) return '—';
+  const code = match[0].toUpperCase();
+  return AIRLINE_MAP[code] || code;
 }
 
 async function ensureAuthed(){
@@ -189,40 +234,56 @@ async function renderBookings(){
       return;
     }
     $('#list').innerHTML = `
-      <table class="table">
-        <thead>
-          <tr>
-            <th>ID</th>
-            <th>Trip</th>
-            <th>Travelers</th>
-            <th>First depart</th>
-            <th>Payment</th>
-            <th>Status</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${rows.map(b=>{
-            const pay = b.payment_type === 'Miles'
-              ? `${b.cost_miles ?? 'N/A'} miles + ${b.fees ?? 'N/A'} fees`
-              : (b.cost_cash ?? 'N/A');
-            const st = b.any_canceled ? '<span class="badge warn">Has canceled</span>' : '<span class="badge ok">OK</span>';
+      <div class="booking-list">
+        <div class="booking-grid booking-header">
+          <div>Departure</div>
+          <div>Arrival</div>
+          <div>Airline</div>
+          <div>Flight #</div>
+          <div>Traveler</div>
+          <div>PNR</div>
+          <div>Notes</div>
+          <div>Payment</div>
+          <div>Type</div>
+          <div>Status</div>
+        </div>
+        ${rows.flatMap(b=>{
+          const payment = b.payment_type === 'Miles'
+            ? fmtMilesWithFees(b.cost_miles, b.fees, b.currency)
+            : fmtCashWithCurrency(b.cost_cash, b.currency);
+          const statusBadge = b.any_canceled ? '<span class="badge warn">Has canceled</span>' : '<span class="badge ok">OK</span>';
+          const firstSeg = b.first_segment || {};
+          const airline = airlineNameFromFlightNumber(firstSeg.flight_number, firstSeg.airline);
+          const travelers = b.traveler_details?.length ? b.traveler_details : [{ name: '—', pnr: '', reason: '', status: '' }];
+          return travelers.map(t=>{
+            const travelerStatus = t.status === 'Canceled' ? '<span class="badge danger">Canceled</span>' : statusBadge;
             return `
-              <tr>
-                <td><a href="#/booking/${b.id}"><code>#${b.id}</code></a></td>
-                <td>
-                  <div><strong>${escapeHtml(b.booking_type || 'Booking')}</strong> • ${escapeHtml(b.route || '—')}</div>
-                  <div class="muted small">${escapeHtml(b.segment_summary || '')}</div>
-                </td>
-                <td>${escapeHtml(b.travelers || '')}</td>
-                <td>${escapeHtml(b.first_departure || '—')}</td>
-                <td>${escapeHtml(String(pay))}</td>
-                <td>${st}</td>
-              </tr>
+              <div class="booking-row" data-id="${b.id}">
+                <div class="booking-grid">
+                  <div>${escapeHtml(firstSeg.origin || '—')}</div>
+                  <div>${escapeHtml(firstSeg.destination || '—')}</div>
+                  <div>${escapeHtml(airline)}</div>
+                  <div>${escapeHtml(firstSeg.flight_number || '—')}</div>
+                  <div>${escapeHtml(t.name || '—')}</div>
+                  <div>${escapeHtml(t.pnr || '—')}</div>
+                  <div>${escapeHtml(t.reason || '—')}</div>
+                  <div>${escapeHtml(payment)}</div>
+                  <div>${escapeHtml(b.booking_type || '—')}</div>
+                  <div>${travelerStatus}</div>
+                </div>
+                <div class="booking-meta muted small">Booking #${escapeHtml(String(b.id))} • ${escapeHtml(b.route || '—')}</div>
+              </div>
             `;
-          }).join('')}
-        </tbody>
-      </table>
+          });
+        }).join('')}
+      </div>
     `;
+    document.querySelectorAll('.booking-row').forEach(row=>{
+      row.addEventListener('click', ()=>{
+        const id = row.dataset.id;
+        location.hash = `#/booking/${id}`;
+      });
+    });
   }
   $('#refresh').addEventListener('click', ()=>load().catch(e=>toast(e.message)));
   $('#q').addEventListener('keydown', (e)=>{ if(e.key==='Enter') load().catch(err=>toast(err.message)); });
