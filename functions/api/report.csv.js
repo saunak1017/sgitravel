@@ -10,6 +10,23 @@ function toCsv(rows){
   return lines.join('\n');
 }
 
+function normalizeSegmentDateTime(seg){
+  if(!seg) return null;
+  const sched = seg.sched_departure;
+  if(sched && /^\d{4}-\d{2}-\d{2}T/.test(sched)) return sched;
+  if(sched && /^\d{1,2}:\d{2}/.test(sched) && seg.flight_date){
+    return `${seg.flight_date}T${sched}:00`;
+  }
+  return seg.flight_date || sched || null;
+}
+
+function segmentSortKey(seg){
+  const dt = normalizeSegmentDateTime(seg);
+  if(!dt) return 0;
+  const t = new Date(dt).getTime();
+  return Number.isNaN(t) ? 0 : t;
+}
+
 async function build(env, params){
   // reuse logic by calling internal /api/report would cost extra; so duplicate minimal here
   const from = params.get('from') || '';
@@ -38,10 +55,13 @@ async function build(env, params){
   const rows = [];
   for(const r of base){
     const { results: segs } = await env.DB.prepare(
-      'SELECT origin, destination, sched_departure, flight_date FROM segments WHERE booking_id=? ORDER BY COALESCE(sched_departure, flight_date) ASC'
+      'SELECT origin, destination, sched_departure, flight_date FROM segments WHERE booking_id=?'
     ).bind(r.booking_id).all();
-    const route = segs.length ? `${segs[0].origin||'—'} → ${segs[segs.length-1].destination||'—'}` : '—';
-    const first_departure = segs.length ? (segs[0].sched_departure || segs[0].flight_date) : null;
+    const sortedSegs = segs.slice().sort((a,b)=>segmentSortKey(a) - segmentSortKey(b));
+    const firstSeg = sortedSegs[0] || null;
+    const lastSeg = sortedSegs[sortedSegs.length - 1] || null;
+    const route = sortedSegs.length ? `${firstSeg?.origin||'—'} → ${lastSeg?.destination||'—'}` : '—';
+    const first_departure = sortedSegs.length ? normalizeSegmentDateTime(firstSeg) : null;
     if(from){
       const d = (first_departure||'').slice(0,10);
       if(d && d < from) continue;
