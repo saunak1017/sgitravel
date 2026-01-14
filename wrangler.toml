@@ -1,0 +1,11 @@
+name = "company-travel-tracker"
+compatibility_date = "2026-01-13"
+
+# For Cloudflare Pages, you don't strictly need wrangler.toml to deploy,
+# but it's helpful for local dev and D1 bindings.
+pages_build_output_dir = "public"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "company-travel-tracker"
+database_id = "" # filled in after you create the D1 DB
