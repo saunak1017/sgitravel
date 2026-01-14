@@ -29,6 +29,8 @@ export async function onRequestGet({ request, env }) {
   const url = new URL(request.url);
   const q = (url.searchParams.get('q') || '').trim().toLowerCase();
   const status = (url.searchParams.get('status') || '').trim();
+  const personIdRaw = (url.searchParams.get('person_id') || '').trim();
+  const personId = personIdRaw ? Number(personIdRaw) : null;
 
   // basic list: bookings + first/last segment airports + traveler names
   const { results: bookings } = await env.DB.prepare('SELECT * FROM bookings ORDER BY id DESC LIMIT 200').all();
@@ -39,16 +41,18 @@ export async function onRequestGet({ request, env }) {
       'SELECT flight_number, flight_date, origin, destination, sched_departure, sched_arrival, airline FROM segments WHERE booking_id=?'
     ).bind(b.id).all();
     const { results: trav } = await env.DB.prepare(
-      `SELECT tb.status, tb.pnr, tb.reason, p.name FROM traveler_bookings tb
+      `SELECT tb.status, tb.pnr, tb.reason, tb.person_id, p.name FROM traveler_bookings tb
        JOIN people p ON p.id = tb.person_id
        WHERE tb.booking_id=? ORDER BY p.name ASC`
     ).bind(b.id).all();
+    const travelerRows = personId ? trav.filter(t=>t.person_id === personId) : trav;
+    if(personId && travelerRows.length === 0) continue;
 
     const sortedSegs = segs.slice().sort((a,b)=>segmentSortKey(a) - segmentSortKey(b));
     const firstSeg = sortedSegs[0] || null;
     const lastSeg = sortedSegs[sortedSegs.length - 1] || null;
-    const travelers = trav.map(x=>x.name).join(', ');
-    const any_canceled = trav.some(x=>x.status==='Canceled');
+    const travelers = travelerRows.map(x=>x.name).join(', ');
+    const any_canceled = travelerRows.some(x=>x.status==='Canceled');
     const route = sortedSegs.length ? `${firstSeg?.origin||'—'} → ${lastSeg?.destination||'—'}` : '—';
     const first_departure = sortedSegs.length ? normalizeSegmentDateTime(firstSeg) : null;
 
@@ -63,7 +67,7 @@ export async function onRequestGet({ request, env }) {
       route,
       segment_summary: summarizeSegments(segs),
       travelers,
-      traveler_details: trav,
+      traveler_details: travelerRows,
       first_segment: firstSeg ? {
         origin: firstSeg.origin || null,
         destination: firstSeg.destination || null,
@@ -78,7 +82,7 @@ export async function onRequestGet({ request, env }) {
     if(status === 'Canceled' && !any_canceled) continue;
 
     if(q){
-      const travelerBlob = trav.map(t=>`${t.name} ${t.pnr || ''} ${t.reason || ''}`).join(' ');
+      const travelerBlob = travelerRows.map(t=>`${t.name} ${t.pnr || ''} ${t.reason || ''}`).join(' ');
       const segmentBlob = segs.map(s=>`${s.flight_number} ${s.origin || ''} ${s.destination || ''} ${s.airline || ''}`).join(' ');
       const blob = `${row.id} ${row.route} ${row.segment_summary} ${row.travelers} ${travelerBlob} ${segmentBlob}`.toLowerCase();
       if(!blob.includes(q)) continue;
@@ -86,6 +90,13 @@ export async function onRequestGet({ request, env }) {
 
     out.push(row);
   }
+  out.sort((a,b)=>{
+    const ta = a.first_departure ? new Date(a.first_departure).getTime() : Number.POSITIVE_INFINITY;
+    const tb = b.first_departure ? new Date(b.first_departure).getTime() : Number.POSITIVE_INFINITY;
+    const ka = Number.isNaN(ta) ? Number.POSITIVE_INFINITY : ta;
+    const kb = Number.isNaN(tb) ? Number.POSITIVE_INFINITY : tb;
+    return ka - kb;
+  });
 
   return ok({ bookings: out });
 }
