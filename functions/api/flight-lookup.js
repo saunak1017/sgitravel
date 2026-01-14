@@ -6,6 +6,14 @@ function ymd(dateStr){
   return dateStr.slice(0,10);
 }
 
+function pickScheduledOut(f){
+  return f.scheduled_out_local || f.scheduled_off_local || f.scheduled_out || f.scheduled_off || f.scheduled_departure || f.estimated_out || f.actual_out || f.filed_departure_time || null;
+}
+
+function pickScheduledIn(f){
+  return f.scheduled_in_local || f.scheduled_on_local || f.scheduled_in || f.scheduled_on || f.estimated_in || f.actual_in || f.filed_arrival_time || null;
+}
+
 function pickBestFlight(flights, flight_date){
   // choose flight whose scheduled departure date (UTC date portion) matches flight_date if possible,
   // else pick closest by absolute time difference.
@@ -14,7 +22,7 @@ function pickBestFlight(flights, flight_date){
   let bestScore = Infinity;
 
   for(const f of flights){
-    const tStr = f.scheduled_out || f.scheduled_off || f.scheduled_departure || f.estimated_out || f.actual_out || f.filed_departure_time;
+    const tStr = pickScheduledOut(f);
     const t = tStr ? new Date(tStr).getTime() : NaN;
     const d = tStr ? tStr.slice(0,10) : null;
 
@@ -75,8 +83,8 @@ export async function onRequestGet({ request, env }) {
     flight_date,
     origin: best.origin?.code_iata || best.origin?.code || null,
     destination: best.destination?.code_iata || best.destination?.code || null,
-    sched_departure: best.scheduled_out || best.scheduled_off || null,
-    sched_arrival: best.scheduled_in || best.scheduled_on || null,
+    sched_departure: pickScheduledOut(best),
+    sched_arrival: pickScheduledIn(best),
     aircraft_type: best.aircraft_type || null,
     airline: best.operator || best.ident_icao?.slice(0,3) || null
   };
