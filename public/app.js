@@ -943,10 +943,11 @@ async function renderDashboard(){
     }catch(e){ toast(e.message); }
   });
 
-  // default to last 90 days
+  // default window: one year back through one year ahead
   const now = new Date();
-  const prior = new Date(now.getTime() - 90*24*3600*1000);
-  $('#to').value = now.toISOString().slice(0,10);
+  const prior = new Date(now.getTime() - 365*24*3600*1000);
+  const ahead = new Date(now.getTime() + 365*24*3600*1000);
+  $('#to').value = ahead.toISOString().slice(0,10);
   $('#from').value = prior.toISOString().slice(0,10);
   run().catch(e=>toast(e.message));
 }
