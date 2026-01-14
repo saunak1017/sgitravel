@@ -38,7 +38,7 @@ export async function onRequestGet({ request, env }) {
   const out = [];
   for (const b of bookings){
     const { results: segs } = await env.DB.prepare(
-      'SELECT flight_number, flight_date, origin, destination, sched_departure, sched_arrival, airline FROM segments WHERE booking_id=?'
+      'SELECT flight_number, flight_date, origin, destination, sched_departure, sched_arrival, airline, segment_group FROM segments WHERE booking_id=?'
     ).bind(b.id).all();
     const { results: trav } = await env.DB.prepare(
       `SELECT tb.status, tb.pnr, tb.reason, tb.person_id, p.name FROM traveler_bookings tb
@@ -66,6 +66,7 @@ export async function onRequestGet({ request, env }) {
       currency: b.currency || 'USD',
       route,
       segment_summary: summarizeSegments(segs),
+      segments: segs,
       travelers,
       traveler_details: travelerRows,
       first_segment: firstSeg ? {
@@ -139,8 +140,8 @@ export async function onRequestPost({ request, env }) {
   // Segments
   for(const s of segments){
     await env.DB.prepare(
-      `INSERT INTO segments (booking_id, flight_number, flight_date, origin, destination, sched_departure, sched_arrival, airline, aircraft_type, fetched_json)
-       VALUES (?,?,?,?,?,?,?,?,?,?)`
+      `INSERT INTO segments (booking_id, flight_number, flight_date, origin, destination, sched_departure, sched_arrival, airline, aircraft_type, fetched_json, segment_group)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?)`
     ).bind(
       booking_id,
       s.flight_number,
@@ -151,7 +152,8 @@ export async function onRequestPost({ request, env }) {
       s.sched_arrival || null,
       s.airline || null,
       s.aircraft_type || null,
-      s.fetched_json ? JSON.stringify(s.fetched_json) : null
+      s.fetched_json ? JSON.stringify(s.fetched_json) : null,
+      s.segment_group || 'Outbound'
     ).run();
   }
 
