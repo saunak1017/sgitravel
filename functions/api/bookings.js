@@ -5,6 +5,23 @@ function summarizeSegments(segs){
   return parts.join(' • ');
 }
 
+function normalizeSegmentDateTime(seg){
+  if(!seg) return null;
+  const sched = seg.sched_departure;
+  if(sched && /^\d{4}-\d{2}-\d{2}T/.test(sched)) return sched;
+  if(sched && /^\d{1,2}:\d{2}/.test(sched) && seg.flight_date){
+    return `${seg.flight_date}T${sched}:00`;
+  }
+  return seg.flight_date || sched || null;
+}
+
+function segmentSortKey(seg){
+  const dt = normalizeSegmentDateTime(seg);
+  if(!dt) return 0;
+  const t = new Date(dt).getTime();
+  return Number.isNaN(t) ? 0 : t;
+}
+
 export async function onRequestGet({ request, env }) {
   const a = await requireAuth(request, env);
   if(!a.ok) return badRequest('Not authenticated', 401);
@@ -18,17 +35,22 @@ export async function onRequestGet({ request, env }) {
 
   const out = [];
   for (const b of bookings){
-    const { results: segs } = await env.DB.prepare('SELECT flight_number, flight_date, origin, destination, sched_departure, sched_arrival FROM segments WHERE booking_id=? ORDER BY COALESCE(sched_departure, flight_date) ASC').bind(b.id).all();
+    const { results: segs } = await env.DB.prepare(
+      'SELECT flight_number, flight_date, origin, destination, sched_departure, sched_arrival, airline FROM segments WHERE booking_id=?'
+    ).bind(b.id).all();
     const { results: trav } = await env.DB.prepare(
-      `SELECT tb.status, p.name FROM traveler_bookings tb
+      `SELECT tb.status, tb.pnr, tb.reason, p.name FROM traveler_bookings tb
        JOIN people p ON p.id = tb.person_id
        WHERE tb.booking_id=? ORDER BY p.name ASC`
     ).bind(b.id).all();
 
+    const sortedSegs = segs.slice().sort((a,b)=>segmentSortKey(a) - segmentSortKey(b));
+    const firstSeg = sortedSegs[0] || null;
+    const lastSeg = sortedSegs[sortedSegs.length - 1] || null;
     const travelers = trav.map(x=>x.name).join(', ');
     const any_canceled = trav.some(x=>x.status==='Canceled');
-    const route = segs.length ? `${segs[0].origin||'—'} → ${segs[segs.length-1].destination||'—'}` : '—';
-    const first_departure = segs.length ? (segs[0].sched_departure || segs[0].flight_date) : null;
+    const route = sortedSegs.length ? `${firstSeg?.origin||'—'} → ${lastSeg?.destination||'—'}` : '—';
+    const first_departure = sortedSegs.length ? normalizeSegmentDateTime(firstSeg) : null;
 
     const row = {
       id: b.id,
@@ -37,9 +59,17 @@ export async function onRequestGet({ request, env }) {
       cost_cash: b.cost_cash ?? 'N/A',
       cost_miles: b.cost_miles ?? 'N/A',
       fees: b.fees ?? 'N/A',
+      currency: b.currency || 'USD',
       route,
       segment_summary: summarizeSegments(segs),
       travelers,
+      traveler_details: trav,
+      first_segment: firstSeg ? {
+        origin: firstSeg.origin || null,
+        destination: firstSeg.destination || null,
+        flight_number: firstSeg.flight_number || null,
+        airline: firstSeg.airline || null
+      } : null,
       first_departure,
       any_canceled
     };
@@ -48,7 +78,9 @@ export async function onRequestGet({ request, env }) {
     if(status === 'Canceled' && !any_canceled) continue;
 
     if(q){
-      const blob = `${row.id} ${row.route} ${row.segment_summary} ${row.travelers}`.toLowerCase();
+      const travelerBlob = trav.map(t=>`${t.name} ${t.pnr || ''} ${t.reason || ''}`).join(' ');
+      const segmentBlob = segs.map(s=>`${s.flight_number} ${s.origin || ''} ${s.destination || ''} ${s.airline || ''}`).join(' ');
+      const blob = `${row.id} ${row.route} ${row.segment_summary} ${row.travelers} ${travelerBlob} ${segmentBlob}`.toLowerCase();
       if(!blob.includes(q)) continue;
     }
 
