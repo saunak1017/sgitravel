@@ -8,4 +8,4 @@ pages_build_output_dir = "public"
 [[d1_databases]]
 binding = "DB"
 database_name = "company-travel-tracker"
-database_id = "" # filled in after you create the D1 DB
+database_id = "b9e96d70-0c8f-4659-8a0f-5c697411d1c9"
