@@ -1,4 +1,4 @@
-import { requireAuth, ok, badRequest } from '../../../_lib/auth.js';
+import { requireAuth, ok, badRequest } from '../../_lib/auth.js';
 
 export async function onRequestPut({ request, env, params }) {
   const a = await requireAuth(request, env);
