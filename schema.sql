@@ -1,5 +1,6 @@
--- D1 schema for Company Travel Tracker
 PRAGMA foreign_keys = ON;
+
+BEGIN TRANSACTION;
 
 CREATE TABLE IF NOT EXISTS people (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -11,7 +12,7 @@ CREATE TABLE IF NOT EXISTS people (
 CREATE TABLE IF NOT EXISTS bookings (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   booking_type TEXT NOT NULL,
-  payment_type TEXT NOT NULL, -- Cash or Miles
+  payment_type TEXT NOT NULL,
   cost_cash REAL,
   cost_miles INTEGER,
   fees REAL,
@@ -27,13 +28,14 @@ CREATE TABLE IF NOT EXISTS segments (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   booking_id INTEGER NOT NULL,
   flight_number TEXT NOT NULL,
-  flight_date TEXT NOT NULL, -- YYYY-MM-DD
+  flight_date TEXT NOT NULL,
   origin TEXT,
   destination TEXT,
-  sched_departure TEXT, -- ISO string
-  sched_arrival TEXT,   -- ISO string
+  sched_departure TEXT,
+  sched_arrival TEXT,
   airline TEXT,
   aircraft_type TEXT,
+  segment_group TEXT NOT NULL DEFAULT 'Outbound',
   fetched_json TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   FOREIGN KEY (booking_id) REFERENCES bookings(id) ON DELETE CASCADE
@@ -46,7 +48,7 @@ CREATE TABLE IF NOT EXISTS traveler_bookings (
   pnr TEXT NOT NULL,
   category TEXT,
   reason TEXT,
-  status TEXT NOT NULL DEFAULT 'Active', -- Active/Canceled
+  status TEXT NOT NULL DEFAULT 'Active',
   refund_method TEXT,
   refund_notes TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -57,3 +59,5 @@ CREATE TABLE IF NOT EXISTS traveler_bookings (
 CREATE INDEX IF NOT EXISTS idx_segments_booking ON segments(booking_id);
 CREATE INDEX IF NOT EXISTS idx_traveler_booking ON traveler_bookings(booking_id);
 CREATE INDEX IF NOT EXISTS idx_traveler_person ON traveler_bookings(person_id);
+
+COMMIT;
