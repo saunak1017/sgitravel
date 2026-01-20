@@ -357,13 +357,13 @@ async function renderBookings(){
   function renderList(entries){
     $('#list').innerHTML = `
       <div class="booking-list">
-        <div class="booking-grid booking-header">
+        <div class="booking-summary-grid booking-header">
           <div>Trip</div>
           <div>Traveler</div>
           <div>PNR</div>
-          <div>Notes</div>
           <div>Payment</div>
           <div>Type</div>
+          <div>Notes</div>
           <div>Status</div>
         </div>
         ${entries.flatMap(entry=>{
@@ -373,57 +373,73 @@ async function renderBookings(){
             ? fmtMilesWithFees(b.cost_miles, b.fees, b.currency)
             : fmtCashWithCurrency(b.cost_cash, b.currency);
           const statusBadge = b.any_canceled ? '<span class="badge warn">Has canceled</span>' : '<span class="badge ok">OK</span>';
-          const layovers = computeLayoversForSegments(group.segments);
           const groupLabel = b.booking_type === 'Roundtrip' ? group.label : 'Trip';
           const departDate = entry.first_departure ? entry.first_departure.toLocaleDateString() : '—';
+          const firstSeg = group.segments[0] || {};
+          const lastSeg = group.segments[group.segments.length - 1] || {};
+          const routeLabel = `${firstSeg.origin || '—'} → ${lastSeg.destination || '—'}`;
+          const tripMeta = `${groupLabel} • ${departDate}`;
           return entry.travelers.map(t=>{
             const travelerStatus = t.status === 'Canceled' ? '<span class="badge danger">Canceled</span>' : statusBadge;
             return `
-              <div class="booking-row" data-id="${b.id}">
-                <div class="booking-grid">
-                  <div class="segment-strip">
-                    <div class="segment-strip-header">
-                      <span class="badge">${escapeHtml(groupLabel)}</span>
-                      <span class="muted small">${escapeHtml(departDate)}</span>
+              <details class="booking-accordion" data-id="${b.id}">
+                <summary class="booking-summary">
+                  <div class="booking-summary-grid">
+                    <div>
+                      <div class="booking-trip">${escapeHtml(routeLabel)}</div>
+                      <div class="booking-trip-meta muted small">${escapeHtml(tripMeta)}</div>
                     </div>
+                    <div>${escapeHtml(t.name || '—')}</div>
+                    <div>${escapeHtml(t.pnr || '—')}</div>
+                    <div>${escapeHtml(payment)}</div>
+                    <div>${escapeHtml(b.booking_type || '—')}</div>
+                    <div>${escapeHtml(t.reason || '—')}</div>
+                    <div>${travelerStatus}</div>
+                  </div>
+                </summary>
+                <div class="booking-accordion-body">
+                  <div class="segment-strip">
                     <div class="segment-strip-legs">
-                      ${group.segments.length ? group.segments.map((s,i)=>{
-                        const airline = airlineNameFromFlightNumber(s.flight_number, s.airline);
-                        const departTime = formatSegmentClock(s.sched_departure);
-                        const arriveTime = formatSegmentClock(s.sched_arrival);
-                        const timeLabel = departTime || arriveTime ? `${departTime || '—'} → ${arriveTime || '—'}` : '—';
-                        const dateLabel = s.flight_date ? fmtDateOnly(s.flight_date) : '—';
-                        return `
-                          <div class="segment-strip-leg">
-                            <div class="segment-strip-route">${escapeHtml(s.origin || '—')} → ${escapeHtml(s.destination || '—')}</div>
-                            <div class="segment-strip-meta">${escapeHtml(airline)} ${escapeHtml(s.flight_number || '')} • ${escapeHtml(dateLabel)}</div>
-                            <div class="segment-strip-meta">${escapeHtml(timeLabel)}</div>
-                          </div>
-                          ${i < layovers.length ? `<div class="segment-strip-layover">Layover ${escapeHtml(layovers[i])}</div>` : ''}
-                        `;
-                      }).join('') : '<div class="segment-strip-leg">No segments</div>'}
+                      ${renderSegmentLegs(group.segments)}
                     </div>
                   </div>
-                  <div>${escapeHtml(t.name || '—')}</div>
-                  <div>${escapeHtml(t.pnr || '—')}</div>
-                  <div>${escapeHtml(t.reason || '—')}</div>
-                  <div>${escapeHtml(payment)}</div>
-                  <div>${escapeHtml(b.booking_type || '—')}</div>
-                  <div>${travelerStatus}</div>
+                  <div class="booking-meta muted small">Booking #${escapeHtml(String(b.id))} • ${escapeHtml(b.route || '—')}</div>
+                  <div class="booking-actions">
+                    <button class="btn" data-open-booking="${b.id}">Open booking</button>
+                  </div>
                 </div>
-                <div class="booking-meta muted small">Booking #${escapeHtml(String(b.id))} • ${escapeHtml(b.route || '—')}</div>
-              </div>
+              </details>
             `;
           });
         }).join('')}
       </div>
     `;
-    document.querySelectorAll('.booking-row').forEach(row=>{
-      row.addEventListener('click', ()=>{
-        const id = row.dataset.id;
+    document.querySelectorAll('[data-open-booking]').forEach(btn=>{
+      btn.addEventListener('click', (event)=>{
+        event.stopPropagation();
+        const id = btn.dataset.openBooking;
         location.hash = `#/booking/${id}`;
       });
     });
+  }
+  function renderSegmentLegs(segments){
+    if(!segments.length) return '<div class="segment-strip-leg">No segments</div>';
+    const layovers = computeLayoversForSegments(segments);
+    return segments.map((s,i)=>{
+      const airline = airlineNameFromFlightNumber(s.flight_number, s.airline);
+      const departTime = formatSegmentClock(s.sched_departure);
+      const arriveTime = formatSegmentClock(s.sched_arrival);
+      const timeLabel = departTime || arriveTime ? `${departTime || '—'} → ${arriveTime || '—'}` : '—';
+      const dateLabel = s.flight_date ? fmtDateOnly(s.flight_date) : '—';
+      return `
+        <div class="segment-strip-leg">
+          <div class="segment-strip-route">${escapeHtml(s.origin || '—')} → ${escapeHtml(s.destination || '—')}</div>
+          <div class="segment-strip-meta">${escapeHtml(airline)} ${escapeHtml(s.flight_number || '')} • ${escapeHtml(dateLabel)}</div>
+          <div class="segment-strip-meta">${escapeHtml(timeLabel)}</div>
+        </div>
+        ${i < layovers.length ? `<div class="segment-strip-layover">Layover ${escapeHtml(layovers[i])}</div>` : ''}
+      `;
+    }).join('');
   }
   function renderCalendar(entries){
     const month = new Date(bookingsMonth.getFullYear(), bookingsMonth.getMonth(), 1);
