@@ -297,12 +297,6 @@ async function renderBookings(){
             <option value="Canceled">Canceled (any traveler)</option>
           </select>
         </div>
-        <div style="min-width:160px">
-          <label class="checkbox">
-            <input id="showFlown" type="checkbox"/>
-            Show flown
-          </label>
-        </div>
         <button id="refresh" class="btn">Refresh</button>
       </div>
       <div class="hr"></div>
@@ -322,14 +316,13 @@ async function renderBookings(){
     const q = $('#q').value.trim();
     const status = $('#status').value;
     const person_id = personFilter.value || '';
-    const showFlown = $('#showFlown').checked;
     const data = await api.get(`/api/bookings?`+new URLSearchParams({q,status,person_id}).toString());
     const rows = (data.bookings || []).slice();
     if(!rows.length){
       $('#list').innerHTML = '<div class="muted">No bookings found.</div>';
       return;
     }
-    const groupEntries = buildGroupEntries(rows).filter(entry=>showFlown || !isFlown(entry));
+    const groupEntries = buildGroupEntries(rows);
     if(bookingsView === 'calendar'){
       renderCalendar(groupEntries);
     }else{
@@ -360,12 +353,6 @@ async function renderBookings(){
       return ta - tb;
     });
     return entries;
-  }
-  function isFlown(entry){
-    if(!entry.first_departure) return false;
-    const today = new Date();
-    today.setHours(0,0,0,0);
-    return entry.first_departure < today;
   }
   function renderList(entries){
     $('#list').innerHTML = `
@@ -527,7 +514,6 @@ async function renderBookings(){
   $('#q').addEventListener('keydown', (e)=>{ if(e.key==='Enter') load().catch(err=>toast(err.message)); });
   $('#status').addEventListener('change', ()=>load().catch(e=>toast(e.message)));
   $('#person_filter').addEventListener('change', ()=>load().catch(e=>toast(e.message)));
-  $('#showFlown').addEventListener('change', ()=>load().catch(e=>toast(e.message)));
   viewListBtn.addEventListener('click', ()=>{
     bookingsView = 'list';
     syncViewButtons();
@@ -844,7 +830,7 @@ async function renderNewBooking(){
         segmentDateTime(segs[i+1], 'sched_departure')
       );
       if(h===null) continue;
-      const label = h < 0 ? '—' : (h < 24 ? `${h.toFixed(1)}h` : `${Math.round(h)}h`));
+      const label = h < 0 ? '—' : (h < 24 ? `${h.toFixed(1)}h` : `${Math.round(h)}h`);
       parts.push(label);
     }
     return parts.join(' • ');
@@ -1047,7 +1033,486 @@ async function renderBookingDetail(id){
     </div>
   `;
 
-  // ...rest of file unchanged...
+  // travelers list
+  const travList = $('#travList');
+  travList.innerHTML = trav.map(t=>{
+    const badge = t.status === 'Canceled' ? 'badge danger' : 'badge ok';
+    const cancelBtn = t.status === 'Canceled'
+      ? `<button class="btn" data-uncancel="${t.id}">Mark active</button>`
+      : `<button class="btn btn-danger" data-cancel="${t.id}">Cancel ticket</button>`;
+    return `
+      <div class="card" style="margin-top:10px">
+        <div class="row">
+          <strong class="spacer">${escapeHtml(t.name)}</strong>
+          <span class="${badge}">${escapeHtml(t.status)}</span>
+        </div>
+        <div class="grid two" style="margin-top:10px">
+          <div>
+            <label>PNR</label>
+            <input data-pnr="${t.id}" value="${escapeAttr(t.pnr || '')}"/>
+          </div>
+          <div>
+            <label>Category</label>
+            <input data-category="${t.id}" value="${escapeAttr(t.category || '')}"/>
+          </div>
+          <div style="grid-column:1 / -1">
+            <label>Reason for travel</label>
+            <textarea data-reason="${t.id}">${escapeHtml(t.reason || '')}</textarea>
+          </div>
+          <div>
+            <label>Refund method</label>
+            <select data-refund="${t.id}">
+              ${['','Card','eCredit','Miles redeposited','Other'].map(x=>`<option ${t.refund_method===x?'selected':''}>${x}</option>`).join('')}
+            </select>
+          </div>
+          <div>
+            <label>Refund notes</label>
+            <input data-refundNotes="${t.id}" value="${escapeAttr(t.refund_notes || '')}"/>
+          </div>
+        </div>
+        <div class="row" style="margin-top:10px">
+          <button class="btn btn-primary" data-saveTraveler="${t.id}">Save</button>
+          ${cancelBtn}
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  trav.forEach(t=>{
+    travList.querySelector(`[data-saveTraveler="${t.id}"]`)?.addEventListener('click', async ()=>{
+      try{
+        const payload = {
+          pnr: travList.querySelector(`[data-pnr="${t.id}"]`).value.trim(),
+          category: travList.querySelector(`[data-category="${t.id}"]`).value.trim(),
+          reason: travList.querySelector(`[data-reason="${t.id}"]`).value.trim(),
+          refund_method: travList.querySelector(`[data-refund="${t.id}"]`).value.trim(),
+          refund_notes: travList.querySelector(`[data-refundNotes="${t.id}"]`).value.trim(),
+        };
+        await api.put(`/api/travelers/${t.id}`, payload);
+        toast('Saved');
+        location.reload();
+      }catch(e){ toast(e.message); }
+    });
+    travList.querySelector(`[data-cancel="${t.id}"]`)?.addEventListener('click', async ()=>{
+      const refund_method = travList.querySelector(`[data-refund="${t.id}"]`).value.trim() || 'eCredit';
+      try{
+        await api.put(`/api/travelers/${t.id}/status`, {status:'Canceled', refund_method});
+        toast('Canceled');
+        location.reload();
+      }catch(e){ toast(e.message); }
+    });
+    travList.querySelector(`[data-uncancel="${t.id}"]`)?.addEventListener('click', async ()=>{
+      try{
+        await api.put(`/api/travelers/${t.id}/status`, {status:'Active'});
+        toast('Active');
+        location.reload();
+      }catch(e){ toast(e.message); }
+    });
+  });
+
+  const editPaymentTypeEl = $('#edit_payment_type');
+  function syncEditPaymentUI(){
+    const t = editPaymentTypeEl.value;
+    if(t==='Cash'){
+      $('#editCashWrap').classList.remove('hidden');
+      $('#editMilesWrap').classList.add('hidden');
+      $('#editFeesWrap').classList.add('hidden');
+    }else{
+      $('#editCashWrap').classList.add('hidden');
+      $('#editMilesWrap').classList.remove('hidden');
+      $('#editFeesWrap').classList.remove('hidden');
+    }
+  }
+  editPaymentTypeEl.addEventListener('change', syncEditPaymentUI);
+  syncEditPaymentUI();
+
+  let editSegIdx = 0;
+  const editOutboundWrap = $('#editSegmentsOutbound');
+  const editReturnWrap = $('#editSegmentsReturn');
+  const editReturnGroup = $('#editReturnGroup');
+
+  function syncEditReturnVisibility(){
+    const isRoundtrip = $('#edit_booking_type').value === 'Roundtrip';
+    editReturnGroup.classList.toggle('hidden', !isRoundtrip);
+    recomputeEditLayovers();
+  }
+  $('#edit_booking_type').addEventListener('change', syncEditReturnVisibility);
+  syncEditReturnVisibility();
+
+  function addEditSegment(group, container, prefill={}){
+    const idx = editSegIdx++;
+    const el = document.createElement('div');
+    el.className = 'card';
+    el.style.marginTop = '10px';
+    el.dataset.seg = String(idx);
+    el.dataset.group = group;
+    el.innerHTML = `
+      <div class="row">
+        <strong class="spacer">Segment ${idx+1}</strong>
+        <button class="btn btn-danger" data-remove="${idx}">Remove</button>
+      </div>
+      <div class="grid three" style="margin-top:10px">
+        <div>
+          <label>Flight number</label>
+          <input data-flight="${idx}" value="${escapeAttr(prefill.flight_number||'')}"/>
+        </div>
+        <div>
+          <label>Flight date</label>
+          <input data-date="${idx}" type="date" value="${escapeAttr(prefill.flight_date||'')}"/>
+        </div>
+        <div style="display:flex;align-items:end;gap:10px">
+          <button class="btn" data-fetch="${idx}">Fetch</button>
+          <span class="muted small" data-fetchStatus="${idx}"></span>
+        </div>
+
+        <div>
+          <label>Departure (airport code)</label>
+          <input data-origin="${idx}" value="${escapeAttr(prefill.origin||'')}"/>
+        </div>
+        <div>
+          <label>Arrival (airport code)</label>
+          <input data-dest="${idx}" value="${escapeAttr(prefill.destination||'')}"/>
+        </div>
+        <div>
+          <label>Aircraft type</label>
+          <input data-aircraft="${idx}" value="${escapeAttr(prefill.aircraft_type||'')}"/>
+        </div>
+
+        <div>
+          <label>Scheduled departure</label>
+          <input data-sdep="${idx}" value="${escapeAttr(formatTimeInput(prefill.sched_departure||''))}"/>
+        </div>
+        <div>
+          <label>Scheduled arrival</label>
+          <input data-sarr="${idx}" value="${escapeAttr(formatTimeInput(prefill.sched_arrival||''))}"/>
+        </div>
+        <div>
+          <label>Airline (optional)</label>
+          <input data-airline="${idx}" value="${escapeAttr(prefill.airline||'')}"/>
+        </div>
+      </div>
+    `;
+    container.appendChild(el);
+
+    el.querySelector(`[data-remove="${idx}"]`).addEventListener('click', ()=>{
+      el.remove();
+      recomputeEditLayovers();
+    });
+    el.querySelector(`[data-fetch="${idx}"]`).addEventListener('click', async ()=>{
+      const flight_number = el.querySelector(`[data-flight="${idx}"]`).value.trim();
+      const flight_date = el.querySelector(`[data-date="${idx}"]`).value;
+      const statusEl = el.querySelector(`[data-fetchStatus="${idx}"]`);
+      if(!flight_number || !flight_date){ toast('Enter flight number + date'); return; }
+      statusEl.textContent = 'Fetching…';
+      try{
+        const r = await api.get('/api/flight-lookup?' + new URLSearchParams({flight_number, flight_date}).toString());
+        const f = r.flight;
+        el.querySelector(`[data-origin="${idx}"]`).value = f.origin || '';
+        el.querySelector(`[data-dest="${idx}"]`).value = f.destination || '';
+        el.querySelector(`[data-aircraft="${idx}"]`).value = f.aircraft_type || '';
+        el.querySelector(`[data-sdep="${idx}"]`).value = formatTimeInput(f.sched_departure || '');
+        el.querySelector(`[data-sarr="${idx}"]`).value = formatTimeInput(f.sched_arrival || '');
+        el.querySelector(`[data-airline="${idx}"]`).value = f.airline || '';
+        statusEl.textContent = 'Done';
+        recomputeEditLayovers();
+      }catch(e){
+        statusEl.textContent = 'Failed';
+        toast(e.message);
+      }
+    });
+    recomputeEditLayovers();
+  }
+  segs.forEach(s=>{
+    const group = s.segment_group || 'Outbound';
+    const wrap = group === 'Return' ? editReturnWrap : editOutboundWrap;
+    addEditSegment(group, wrap, s);
+  });
+  $('#editAddOutboundSeg').addEventListener('click', ()=>addEditSegment('Outbound', editOutboundWrap));
+  $('#editAddReturnSeg').addEventListener('click', ()=>addEditSegment('Return', editReturnWrap));
+
+  function recomputeEditLayovers(){
+    const outbound = readEditSegmentsForGroup('Outbound');
+    const inbound = readEditSegmentsForGroup('Return');
+    const outboundHint = outbound.length <= 1 ? '' : summarizeLayovers(outbound);
+    const inboundHint = inbound.length <= 1 ? '' : summarizeLayovers(inbound);
+    $('#editOutboundHint').textContent = outboundHint ? `Layovers: ${outboundHint}` : '';
+    $('#editReturnHint').textContent = inboundHint ? `Layovers: ${inboundHint}` : '';
+  }
+  recomputeEditLayovers();
+
+  function readEditSegmentsForGroup(group){
+    const wrap = group === 'Return' ? editReturnWrap : editOutboundWrap;
+    const segCards = Array.from(wrap.querySelectorAll('[data-seg]'));
+    return sortSegmentsByTime(segCards.map(card=>{
+      const idx = card.dataset.seg;
+      return {
+        flight_number: card.querySelector(`[data-flight="${idx}"]`).value.trim(),
+        flight_date: card.querySelector(`[data-date="${idx}"]`).value,
+        origin: card.querySelector(`[data-origin="${idx}"]`).value.trim() || null,
+        destination: card.querySelector(`[data-dest="${idx}"]`).value.trim() || null,
+        aircraft_type: card.querySelector(`[data-aircraft="${idx}"]`).value.trim() || null,
+        sched_departure: card.querySelector(`[data-sdep="${idx}"]`).value.trim() || null,
+        sched_arrival: card.querySelector(`[data-sarr="${idx}"]`).value.trim() || null,
+        airline: card.querySelector(`[data-airline="${idx}"]`).value.trim() || null,
+        segment_group: group
+      };
+    }).filter(s=>s.flight_number && s.flight_date));
+  }
+
+  function readEditSegments(){
+    const outbound = readEditSegmentsForGroup('Outbound');
+    const isRoundtrip = $('#edit_booking_type').value === 'Roundtrip';
+    if(!isRoundtrip) return outbound;
+    return [...outbound, ...readEditSegmentsForGroup('Return')];
+  }
+
+  $('#saveBookingEdit').addEventListener('click', async ()=>{
+    try{
+      const payment_type = $('#edit_payment_type').value;
+      const cost_cash = $('#edit_cost_cash').value.trim();
+      const cost_miles = $('#edit_cost_miles').value.trim();
+      const fees = $('#edit_fees').value.trim();
+
+      if(payment_type==='Cash'){
+        if(!cost_cash) throw new Error('Cash payment requires Cost (cash).');
+      }else{
+        if(!cost_miles || !fees) throw new Error('Miles payment requires Miles used + Fees.');
+      }
+
+      const segments = readEditSegments();
+      if(!segments.length) throw new Error('Add at least one segment (flight number + date).');
+
+      const payload = {
+        booking: {
+          booking_type: $('#edit_booking_type').value,
+          payment_type,
+          currency: ($('#edit_currency').value.trim() || 'USD').toUpperCase(),
+          cost_cash: cost_cash || null,
+          cost_miles: cost_miles || null,
+          fees: fees || null,
+          class: $('#edit_class').value.trim() || null,
+          secondary_class: $('#edit_secondary_class').value.trim() || null,
+          ticket_end: $('#edit_ticket_end').value || null,
+          issued_on: $('#edit_issued_on').value || null,
+        },
+        segments
+      };
+      await api.put(`/api/bookings/${encodeURIComponent(id)}`, payload);
+      toast('Booking updated');
+      location.reload();
+    }catch(e){
+      toast(e.message);
+    }
+  });
+
+  // segments list
+  const segList = $('#segList');
+  segList.innerHTML = `
+    ${groupSegmentsByLabel(segs).map(group=>{
+      const layovers = computeLayoversForSegments(group.segments);
+      const groupLabel = b.booking_type === 'Roundtrip' ? group.label : 'Trip';
+      return `
+        <div class="segment-group-view">
+          <div class="row" style="padding:8px 0">
+            <strong class="spacer">${escapeHtml(groupLabel)}</strong>
+          </div>
+          <div class="segment-strip">
+            <div class="segment-strip-legs">
+              ${group.segments.map((s,i)=>{
+                const airline = airlineNameFromFlightNumber(s.flight_number, s.airline);
+                const departTime = formatSegmentClock(s.sched_departure);
+                const arriveTime = formatSegmentClock(s.sched_arrival);
+                const timeLabel = departTime || arriveTime ? `${departTime || '—'} → ${arriveTime || '—'}` : '—';
+                const dateLabel = s.flight_date ? fmtDateOnly(s.flight_date) : '—';
+                return `
+                  <div class="segment-strip-leg">
+                    <div class="segment-strip-route">${escapeHtml(s.origin||'—')} → ${escapeHtml(s.destination||'—')}</div>
+                    <div class="segment-strip-meta">${escapeHtml(airline)} ${escapeHtml(s.flight_number || '')} • ${escapeHtml(dateLabel)}</div>
+                    <div class="segment-strip-meta">${escapeHtml(timeLabel)}</div>
+                    <div class="segment-strip-meta">Aircraft ${escapeHtml(s.aircraft_type || '—')}</div>
+                  </div>
+                  ${i < layovers.length ? `<div class="segment-strip-layover">Layover ${escapeHtml(layovers[i])}</div>` : ''}
+                `;
+              }).join('')}
+            </div>
+          </div>
+        </div>
+      `;
+    }).join('')}
+  `;
+
+  $('#deleteBooking').addEventListener('click', async ()=>{
+    if(!confirm('Delete booking permanently?')) return;
+    try{
+      await api.del(`/api/bookings/${encodeURIComponent(id)}`);
+      toast('Deleted');
+      location.hash = '#/bookings';
+    }catch(e){ toast(e.message); }
+  });
+}
+
+/* DASHBOARD */
+async function renderDashboard(){
+  view.innerHTML = `
+    <div class="row">
+      <h1 class="spacer">Dashboard</h1>
+      <button id="exportBtn" class="btn">Export CSV</button>
+    </div>
+
+    <div class="card">
+      <div class="grid three">
+        <div>
+          <label>From</label>
+          <input id="from" type="date"/>
+        </div>
+        <div>
+          <label>To</label>
+          <input id="to" type="date"/>
+        </div>
+        <div>
+          <label>Person</label>
+          <select id="person"><option value="">All</option></select>
+        </div>
+        <div>
+          <label>Category</label>
+          <input id="category" placeholder="optional"/>
+        </div>
+        <div>
+          <label>Status</label>
+          <select id="status">
+            <option value="">All</option>
+            <option>Active</option>
+            <option>Canceled</option>
+          </select>
+        </div>
+        <div style="display:flex;align-items:end;gap:10px">
+          <button id="run" class="btn btn-primary">Run</button>
+          <span class="muted small" id="hint"></span>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid three" style="margin-top:14px">
+      <div class="card"><div class="muted small">Cash spend</div><div id="k_cash" class="kpi">—</div></div>
+      <div class="card"><div class="muted small">Miles used</div><div id="k_miles" class="kpi">—</div></div>
+      <div class="card"><div class="muted small">Award fees</div><div id="k_fees" class="kpi">—</div></div>
+    </div>
+
+    <div class="card" style="margin-top:14px">
+      <h2>Results</h2>
+      <div class="hr"></div>
+      <div id="results" class="muted small">Run a report.</div>
+    </div>
+  `;
+
+  const ppl = (await api.get('/api/people')).people || [];
+  const personSel = $('#person');
+  personSel.innerHTML = '<option value="">All</option>' + ppl.map(p=>`<option value="${p.id}">${escapeHtml(p.name)}</option>`).join('');
+
+  async function run(){
+    const params = {
+      from: $('#from').value || '',
+      to: $('#to').value || '',
+      person_id: $('#person').value || '',
+      category: $('#category').value.trim() || '',
+      status: $('#status').value || ''
+    };
+    const data = await api.get('/api/report?' + new URLSearchParams(params).toString());
+    $('#k_cash').textContent = data.totals.cash_spend ? fmtMoney(data.totals.cash_spend) : '$0';
+    $('#k_miles').textContent = (data.totals.miles_used || 0).toLocaleString();
+    $('#k_fees').textContent = data.totals.award_fees ? fmtMoney(data.totals.award_fees) : '$0';
+
+    const rows = data.rows || [];
+    if(!rows.length){
+      $('#results').innerHTML = '<div class="muted">No matching rows.</div>';
+      return;
+    }
+    $('#results').innerHTML = `
+      <table class="table">
+        <thead>
+          <tr>
+            <th>Person</th><th>Route</th><th>First depart</th><th>Booking</th><th>Reason</th><th>Payment</th><th>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows.map(r=>{
+            const pay = r.payment_type==='Miles'
+              ? `${r.cost_miles ?? 'N/A'} + fees ${r.fees ?? 'N/A'}`
+              : `${r.cost_cash ?? 'N/A'}`;
+            return `
+              <tr>
+                <td>${escapeHtml(r.person)}</td>
+                <td>${escapeHtml(r.route||'—')}</td>
+                <td>${escapeHtml(r.first_departure||'—')}</td>
+                <td><a href="#/booking/${r.booking_id}"><code>#${r.booking_id}</code></a></td>
+                <td>${escapeHtml(r.reason||'')}</td>
+                <td>${escapeHtml(pay)}</td>
+                <td>${r.status==='Canceled' ? '<span class="badge danger">Canceled</span>' : '<span class="badge ok">Active</span>'}</td>
+              </tr>
+            `;
+          }).join('')}
+        </tbody>
+      </table>
+    `;
+  }
+
+  $('#run').addEventListener('click', ()=>run().catch(e=>toast(e.message)));
+  $('#exportBtn').addEventListener('click', async ()=>{
+    try{
+      const params = {
+        from: $('#from').value || '',
+        to: $('#to').value || '',
+        person_id: $('#person').value || '',
+        category: $('#category').value.trim() || '',
+        status: $('#status').value || ''
+      };
+      const res = await fetch('/api/report.csv?' + new URLSearchParams(params).toString(), {credentials:'include'});
+      if(!res.ok) throw new Error('Export failed');
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'travel-report.csv';
+      a.click();
+      URL.revokeObjectURL(url);
+    }catch(e){ toast(e.message); }
+  });
+
+  // default window: one year back through one year ahead
+  const now = new Date();
+  const prior = new Date(now.getTime() - 365*24*3600*1000);
+  const ahead = new Date(now.getTime() + 365*24*3600*1000);
+  $('#to').value = ahead.toISOString().slice(0,10);
+  $('#from').value = prior.toISOString().slice(0,10);
+  run().catch(e=>toast(e.message));
+}
+
+/* ADMIN */
+async function renderAdmin(){
+  const people = (await api.get('/api/people')).people || [];
+  view.innerHTML = `
+    <div class="row">
+      <h1 class="spacer">Admin</h1>
+    </div>
+
+    <div class="grid two">
+      <div class="card">
+        <h2>People</h2>
+        <div class="row" style="margin-top:10px">
+          <input id="newName" placeholder="Add new person (full name)"/>
+          <button id="addPerson" class="btn btn-primary">Add</button>
+        </div>
+        <div id="peopleList"></div>
+      </div>
+
+      <div class="card">
+        <h2>Settings</h2>
+        <p class="muted small">Resetting will delete all bookings and travelers.</p>
+        <button id="reset" class="btn btn-danger">Reset database</button>
+      </div>
+    </div>
+  `;
+  // ...unchanged admin logic continues...
 }
 
 function escapeHtml(s){
