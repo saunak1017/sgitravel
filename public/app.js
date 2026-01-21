@@ -297,6 +297,12 @@ async function renderBookings(){
             <option value="Canceled">Canceled (any traveler)</option>
           </select>
         </div>
+        <div style="min-width:160px">
+          <label class="checkbox">
+            <input id="showFlown" type="checkbox"/>
+            Show flown
+          </label>
+        </div>
         <button id="refresh" class="btn">Refresh</button>
       </div>
       <div class="hr"></div>
@@ -316,13 +322,14 @@ async function renderBookings(){
     const q = $('#q').value.trim();
     const status = $('#status').value;
     const person_id = personFilter.value || '';
+    const showFlown = $('#showFlown').checked;
     const data = await api.get(`/api/bookings?`+new URLSearchParams({q,status,person_id}).toString());
     const rows = (data.bookings || []).slice();
     if(!rows.length){
       $('#list').innerHTML = '<div class="muted">No bookings found.</div>';
       return;
     }
-    const groupEntries = buildGroupEntries(rows);
+    const groupEntries = buildGroupEntries(rows).filter(entry=>showFlown || !isFlown(entry));
     if(bookingsView === 'calendar'){
       renderCalendar(groupEntries);
     }else{
@@ -353,6 +360,12 @@ async function renderBookings(){
       return ta - tb;
     });
     return entries;
+  }
+  function isFlown(entry){
+    if(!entry.first_departure) return false;
+    const today = new Date();
+    today.setHours(0,0,0,0);
+    return entry.first_departure < today;
   }
   function renderList(entries){
     $('#list').innerHTML = `
@@ -514,6 +527,7 @@ async function renderBookings(){
   $('#q').addEventListener('keydown', (e)=>{ if(e.key==='Enter') load().catch(err=>toast(err.message)); });
   $('#status').addEventListener('change', ()=>load().catch(e=>toast(e.message)));
   $('#person_filter').addEventListener('change', ()=>load().catch(e=>toast(e.message)));
+  $('#showFlown').addEventListener('change', ()=>load().catch(e=>toast(e.message)));
   viewListBtn.addEventListener('click', ()=>{
     bookingsView = 'list';
     syncViewButtons();
@@ -1502,19 +1516,76 @@ async function renderAdmin(){
           <input id="newName" placeholder="Add new person (full name)"/>
           <button id="addPerson" class="btn btn-primary">Add</button>
         </div>
+        <div class="hr"></div>
         <div id="peopleList"></div>
       </div>
 
       <div class="card">
-        <h2>Settings</h2>
-        <p class="muted small">Resetting will delete all bookings and travelers.</p>
-        <button id="reset" class="btn btn-danger">Reset database</button>
+        <h2>Backup</h2>
+        <p class="muted small">Download a JSON backup of the database.</p>
+        <button id="backupBtn" class="btn">Download backup</button>
       </div>
     </div>
   `;
-  // ...unchanged admin logic continues...
+
+  function renderPeople(){
+    $('#peopleList').innerHTML = `
+      <table class="table">
+        <thead><tr><th>Name</th><th>Status</th><th></th></tr></thead>
+        <tbody>
+          ${people.map(p=>`
+            <tr>
+              <td>${escapeHtml(p.name)}</td>
+              <td>${p.active ? '<span class="badge ok">Active</span>' : '<span class="badge warn">Inactive</span>'}</td>
+              <td>
+                <button class="btn" data-toggle="${p.id}">${p.active ? 'Deactivate' : 'Activate'}</button>
+              </td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    `;
+    people.forEach(p=>{
+      document.querySelector(`[data-toggle="${p.id}"]`)?.addEventListener('click', async ()=>{
+        try{
+          const r = await api.put(`/api/people/${p.id}`, {active: p.active ? 0 : 1});
+          p.active = r.active;
+          renderPeople();
+          toast('Updated');
+        }catch(e){ toast(e.message); }
+      });
+    });
+  }
+  renderPeople();
+
+  $('#addPerson').addEventListener('click', async ()=>{
+    const name = $('#newName').value.trim();
+    if(!name) return toast('Enter a name');
+    try{
+      const r = await api.post('/api/people', {name});
+      people.unshift(r.person);
+      $('#newName').value = '';
+      renderPeople();
+      toast('Added');
+    }catch(e){ toast(e.message); }
+  });
+
+  $('#backupBtn').addEventListener('click', async ()=>{
+    try{
+      const res = await fetch('/api/backup', {credentials:'include'});
+      if(!res.ok) throw new Error('Backup failed');
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'travel-backup.json';
+      a.click();
+      URL.revokeObjectURL(url);
+    }catch(e){ toast(e.message); }
+  });
 }
 
+/* helpers */
 function escapeHtml(s){
   return String(s ?? '').replace(/[&<>"']/g, c=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
