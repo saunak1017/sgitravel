@@ -119,6 +119,21 @@ input[type="date"]{font-family:var(--mono)}
   border-top:1px solid var(--line);
   background:rgba(15,23,42,.6);
 }
+.booking-map{
+  margin-top:12px;
+  border:1px solid var(--line);
+  border-radius:12px;
+  background:rgba(10,16,28,.6);
+  overflow:hidden;
+}
+.booking-map img{
+  width:100%;
+  height:auto;
+  display:block;
+}
+.booking-map-full{
+  min-height:320px;
+}
 .booking-actions{
   margin-top:12px;
   display:flex;
