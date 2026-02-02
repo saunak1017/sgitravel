@@ -158,6 +158,17 @@ function formatSegmentClock(value){
   if(match) return match[1];
   return value;
 }
+function buildGcmRoutesForSegments(segments){
+  if(!segments?.length) return '';
+  return segments
+    .filter(s=>s.origin && s.destination)
+    .map(s=>`${s.origin}-${s.destination}`)
+    .join(',');
+}
+function buildGcmImageUrl(routes){
+  if(!routes) return '';
+  return `https://www.greatcirclemap.com/img?routes=${encodeURIComponent(routes)}`;
+}
 
 const AIRLINE_MAP = {
   UA: 'United',
@@ -276,6 +287,7 @@ async function renderBookings(){
       <div class="row">
         <button id="viewList" class="btn btn-ghost">List</button>
         <button id="viewCalendar" class="btn btn-ghost">Calendar</button>
+        <button id="viewMap" class="btn btn-ghost">Map</button>
       </div>
       <a class="btn btn-primary" href="#/new">+ New booking</a>
     </div>
@@ -313,9 +325,11 @@ async function renderBookings(){
   personFilter.innerHTML = '<option value="">All</option>' + people.map(p=>`<option value="${p.id}">${escapeHtml(p.name)}</option>`).join('');
   const viewListBtn = $('#viewList');
   const viewCalendarBtn = $('#viewCalendar');
+  const viewMapBtn = $('#viewMap');
   function syncViewButtons(){
     viewListBtn.classList.toggle('btn-primary', bookingsView === 'list');
     viewCalendarBtn.classList.toggle('btn-primary', bookingsView === 'calendar');
+    viewMapBtn.classList.toggle('btn-primary', bookingsView === 'map');
   }
   syncViewButtons();
   async function load(){
@@ -332,6 +346,8 @@ async function renderBookings(){
     const groupEntries = buildGroupEntries(rows).filter(entry=>showFlown || !isFlown(entry));
     if(bookingsView === 'calendar'){
       renderCalendar(groupEntries);
+    }else if(bookingsView === 'map'){
+      renderMap(groupEntries);
     }else{
       renderList(groupEntries);
     }
@@ -416,6 +432,7 @@ async function renderBookings(){
                       ${renderSegmentLegs(group.segments)}
                     </div>
                   </div>
+                  ${renderBookingMap(group.segments)}
                   <div class="booking-meta muted small">Booking #${escapeHtml(String(b.id))} • ${escapeHtml(b.route || '—')}</div>
                   <div class="booking-actions">
                     <button class="btn" data-open-booking="${b.id}">Open booking</button>
@@ -453,6 +470,16 @@ async function renderBookings(){
         ${i < layovers.length ? `<div class="segment-strip-layover">Layover ${escapeHtml(layovers[i])}</div>` : ''}
       `;
     }).join('');
+  }
+  function renderBookingMap(segments){
+    const routes = buildGcmRoutesForSegments(segments);
+    if(!routes) return '';
+    const imgUrl = buildGcmImageUrl(routes);
+    return `
+      <div class="booking-map">
+        <img src="${imgUrl}" alt="Route map" loading="lazy"/>
+      </div>
+    `;
   }
   function renderCalendar(entries){
     const month = new Date(bookingsMonth.getFullYear(), bookingsMonth.getMonth(), 1);
@@ -523,8 +550,24 @@ async function renderBookings(){
       load().catch(e=>toast(e.message));
     });
   }
+  function renderMap(entries){
+    const futureEntries = entries.filter(entry=>!isFlown(entry));
+    const routes = futureEntries
+      .flatMap(entry=>buildGcmRoutesForSegments(entry.group.segments).split(',').filter(Boolean))
+      .join(',');
+    if(!routes){
+      $('#list').innerHTML = '<div class="muted">No upcoming trips to map.</div>';
+      return;
+    }
+    const imgUrl = buildGcmImageUrl(routes);
+    $('#list').innerHTML = `
+      <div class="booking-map booking-map-full">
+        <img src="${imgUrl}" alt="Upcoming trips map" loading="lazy"/>
+      </div>
+    `;
+  }
   $('#refresh').addEventListener('click', ()=>load().catch(e=>toast(e.message)));
-  $('#q').addEventListener('keydown', (e)=>{ if(e.key==='Enter') load().catch(err=>toast(err.message)); });
+  $('#q').addEventListener('keydown', (e)=>{ if(e.key==='Enter') load().catch(err=>toast(e.message)); });
   $('#status').addEventListener('change', ()=>load().catch(e=>toast(e.message)));
   $('#person_filter').addEventListener('change', ()=>load().catch(e=>toast(e.message)));
   $('#showFlown').addEventListener('change', ()=>load().catch(e=>toast(e.message)));
@@ -535,6 +578,11 @@ async function renderBookings(){
   });
   viewCalendarBtn.addEventListener('click', ()=>{
     bookingsView = 'calendar';
+    syncViewButtons();
+    load().catch(e=>toast(e.message));
+  });
+  viewMapBtn.addEventListener('click', ()=>{
+    bookingsView = 'map';
     syncViewButtons();
     load().catch(e=>toast(e.message));
   });
@@ -844,7 +892,7 @@ async function renderNewBooking(){
         segmentDateTime(segs[i+1], 'sched_departure')
       );
       if(h===null) continue;
-      const label = h < 0 ? '—' : (h < 24 ? `${h.toFixed(1)}h` : `${Math.round(h)}h`);
+      const label = h < 0 ? '—' : (h < 24 ? `${h.toFixed(1)}h` : `${Math.round(h)}h`));
       parts.push(label);
     }
     return parts.join(' • ');
