@@ -722,7 +722,7 @@ async function renderNewBooking(){
     el.innerHTML = `
       <div class="row">
         <strong class="spacer">Segment ${idx+1}</strong>
-        <button class="btn btn-danger" data-remove="${idx}">Remove</button>
+        <button type="button" class="btn btn-danger" data-remove="${idx}">Remove</button>
       </div>
       <div class="grid three" style="margin-top:10px">
         <div>
@@ -734,7 +734,7 @@ async function renderNewBooking(){
           <input data-date="${idx}" type="date" value="${escapeAttr(prefill.flight_date||'')}"/>
         </div>
         <div style="display:flex;align-items:end;gap:10px">
-          <button class="btn" data-fetch="${idx}">Fetch</button>
+          <button type="button" class="btn" data-fetch="${idx}">Fetch</button>
           <span class="muted small" data-fetchStatus="${idx}"></span>
         </div>
 
@@ -956,7 +956,7 @@ async function renderBookingDetail(id){
           </div>
         </div>
         <div class="hr"></div>
-        <button id="deleteBooking" class="btn btn-danger">Delete booking (danger)</button>
+        <button id="deleteBooking" type="button" class="btn btn-danger">Delete booking (danger)</button>
         <p class="muted small">This is the only destructive action. Tickets cancellation should be used instead.</p>
       </div>
 
@@ -1021,7 +1021,7 @@ async function renderBookingDetail(id){
       <div class="segment-group-card">
         <div class="row">
           <strong class="spacer">Outbound</strong>
-          <button id="editAddOutboundSeg" class="btn">+ Add segment</button>
+          <button id="editAddOutboundSeg" type="button" class="btn">+ Add segment</button>
         </div>
         <div id="editSegmentsOutbound"></div>
         <div class="muted small" id="editOutboundHint"></div>
@@ -1029,13 +1029,13 @@ async function renderBookingDetail(id){
       <div id="editReturnGroup" class="segment-group-card" style="margin-top:14px">
         <div class="row">
           <strong class="spacer">Return</strong>
-          <button id="editAddReturnSeg" class="btn">+ Add segment</button>
+          <button id="editAddReturnSeg" type="button" class="btn">+ Add segment</button>
         </div>
         <div id="editSegmentsReturn"></div>
         <div class="muted small" id="editReturnHint"></div>
       </div>
       <div class="row" style="margin-top:14px">
-        <button id="saveBookingEdit" class="btn btn-primary">Save booking changes</button>
+        <button id="saveBookingEdit" type="button" class="btn btn-primary">Save booking changes</button>
         <span class="muted small" id="editSaveHint"></span>
       </div>
     </div>
@@ -1047,13 +1047,63 @@ async function renderBookingDetail(id){
     </div>
   `;
 
+  $('#deleteBooking').addEventListener('click', async (event)=>{
+    event.preventDefault();
+    if(!confirm('Delete booking permanently?')) return;
+    try{
+      await api.del(`/api/bookings/${encodeURIComponent(id)}`);
+      toast('Deleted');
+      location.hash = '#/bookings';
+    }catch(e){ toast(e.message); }
+  });
+
+  $('#saveBookingEdit').addEventListener('click', async (event)=>{
+    event.preventDefault();
+    try{
+      const payment_type = $('#edit_payment_type').value;
+      const cost_cash = $('#edit_cost_cash').value.trim();
+      const cost_miles = $('#edit_cost_miles').value.trim();
+      const fees = $('#edit_fees').value.trim();
+
+      if(payment_type==='Cash'){
+        if(!cost_cash) throw new Error('Cash payment requires Cost (cash).');
+      }else{
+        if(!cost_miles || !fees) throw new Error('Miles payment requires Miles used + Fees.');
+      }
+
+      const segments = readEditSegments();
+      if(!segments.length) throw new Error('Add at least one segment (flight number + date).');
+
+      const payload = {
+        booking: {
+          booking_type: $('#edit_booking_type').value,
+          payment_type,
+          currency: ($('#edit_currency').value.trim() || 'USD').toUpperCase(),
+          cost_cash: cost_cash || null,
+          cost_miles: cost_miles || null,
+          fees: fees || null,
+          class: $('#edit_class').value.trim() || null,
+          secondary_class: $('#edit_secondary_class').value.trim() || null,
+          ticket_end: $('#edit_ticket_end').value || null,
+          issued_on: $('#edit_issued_on').value || null,
+        },
+        segments
+      };
+      await api.put(`/api/bookings/${encodeURIComponent(id)}`, payload);
+      toast('Booking updated');
+      location.reload();
+    }catch(e){
+      toast(e.message);
+    }
+  });
+
   // travelers list
   const travList = $('#travList');
   travList.innerHTML = trav.map(t=>{
     const badge = t.status === 'Canceled' ? 'badge danger' : 'badge ok';
     const cancelBtn = t.status === 'Canceled'
-      ? `<button class="btn" data-uncancel="${t.id}">Mark active</button>`
-      : `<button class="btn btn-danger" data-cancel="${t.id}">Cancel ticket</button>`;
+      ? `<button type="button" class="btn" data-uncancel="${t.id}">Mark active</button>`
+      : `<button type="button" class="btn btn-danger" data-cancel="${t.id}">Cancel ticket</button>`;
     return `
       <div class="card" style="margin-top:10px">
         <div class="row">
@@ -1085,7 +1135,7 @@ async function renderBookingDetail(id){
           </div>
         </div>
         <div class="row" style="margin-top:10px">
-          <button class="btn btn-primary" data-saveTraveler="${t.id}">Save</button>
+          <button type="button" class="btn btn-primary" data-saveTraveler="${t.id}">Save</button>
           ${cancelBtn}
         </div>
       </div>
@@ -1163,7 +1213,7 @@ async function renderBookingDetail(id){
     el.innerHTML = `
       <div class="row">
         <strong class="spacer">Segment ${idx+1}</strong>
-        <button class="btn btn-danger" data-remove="${idx}">Remove</button>
+        <button type="button" class="btn btn-danger" data-remove="${idx}">Remove</button>
       </div>
       <div class="grid three" style="margin-top:10px">
         <div>
@@ -1175,7 +1225,7 @@ async function renderBookingDetail(id){
           <input data-date="${idx}" type="date" value="${escapeAttr(prefill.flight_date||'')}"/>
         </div>
         <div style="display:flex;align-items:end;gap:10px">
-          <button class="btn" data-fetch="${idx}">Fetch</button>
+          <button type="button" class="btn" data-fetch="${idx}">Fetch</button>
           <span class="muted small" data-fetchStatus="${idx}"></span>
         </div>
 
@@ -1280,44 +1330,6 @@ async function renderBookingDetail(id){
     return [...outbound, ...readEditSegmentsForGroup('Return')];
   }
 
-  $('#saveBookingEdit').addEventListener('click', async ()=>{
-    try{
-      const payment_type = $('#edit_payment_type').value;
-      const cost_cash = $('#edit_cost_cash').value.trim();
-      const cost_miles = $('#edit_cost_miles').value.trim();
-      const fees = $('#edit_fees').value.trim();
-
-      if(payment_type==='Cash'){
-        if(!cost_cash) throw new Error('Cash payment requires Cost (cash).');
-      }else{
-        if(!cost_miles || !fees) throw new Error('Miles payment requires Miles used + Fees.');
-      }
-
-      const segments = readEditSegments();
-      if(!segments.length) throw new Error('Add at least one segment (flight number + date).');
-
-      const payload = {
-        booking: {
-          booking_type: $('#edit_booking_type').value,
-          payment_type,
-          currency: ($('#edit_currency').value.trim() || 'USD').toUpperCase(),
-          cost_cash: cost_cash || null,
-          cost_miles: cost_miles || null,
-          fees: fees || null,
-          class: $('#edit_class').value.trim() || null,
-          secondary_class: $('#edit_secondary_class').value.trim() || null,
-          ticket_end: $('#edit_ticket_end').value || null,
-          issued_on: $('#edit_issued_on').value || null,
-        },
-        segments
-      };
-      await api.put(`/api/bookings/${encodeURIComponent(id)}`, payload);
-      toast('Booking updated');
-      location.reload();
-    }catch(e){
-      toast(e.message);
-    }
-  });
 
   // segments list
   const segList = $('#segList');
@@ -1355,14 +1367,6 @@ async function renderBookingDetail(id){
     }).join('')}
   `;
 
-  $('#deleteBooking').addEventListener('click', async ()=>{
-    if(!confirm('Delete booking permanently?')) return;
-    try{
-      await api.del(`/api/bookings/${encodeURIComponent(id)}`);
-      toast('Deleted');
-      location.hash = '#/bookings';
-    }catch(e){ toast(e.message); }
-  });
 }
 
 /* DASHBOARD */
